@@ -571,99 +571,323 @@ function rowToCase(row) {
 }
 
 // ── Excel Import Page ─────────────────────────────────────────────────────────
+const FIELD_LABELS_FULL = {
+  serviceNowId:"ServiceNow ID", account:"Account", contact:"Contact",
+  caseReason:"Case Reason", caseSubreason:"Case Subreason", priority:"Priority",
+  status:"Status", productVersion:"Product Version", productUpdate:"Product Update",
+  caseOwner:"Case Owner", subject:"Subject", description:"Description",
+  planToResolve:"Plan to Resolve", expectedBehavior:"Expected Behavior",
+  stepsToReproduce:"Steps to Reproduce", troubleshootingSteps:"Troubleshooting Steps",
+  businessImpact:"Business / User Impact", statusSummary:"Status Summary",
+  nextMilestone:"Next Milestone", caseSkill:"Case Skill",
+  resolutionCode:"Resolution Code", resolutionNotes:"Resolution Notes",
+};
+
+const FIELD_LABELS_SHORT = {
+  serviceNowId:"ServiceNow ID", account:"Account", contact:"Contact",
+  caseReason:"Case Reason", caseSubreason:"Subreason", priority:"Priority",
+  status:"Status", productVersion:"Product Ver.", productUpdate:"Product Upd.",
+  caseOwner:"Owner", subject:"Subject", description:"Description",
+  planToResolve:"Plan to Resolve", expectedBehavior:"Expected Behavior",
+  stepsToReproduce:"Steps to Reproduce", troubleshootingSteps:"Troubleshooting",
+  businessImpact:"Business Impact", statusSummary:"Status Summary",
+  nextMilestone:"Next Milestone", caseSkill:"Skill",
+  resolutionCode:"Res. Code", resolutionNotes:"Res. Notes",
+};
+
+function displayFieldValue(field, value) {
+  if (!value && value !== 0) return "—";
+  if (field === "priority") return priorityMeta(value)?.label || value;
+  if (field === "status")   return statusMeta(value)?.label   || value;
+  const s = String(value);
+  return s.length > 80 ? s.slice(0, 80) + "…" : s;
+}
+
+// Diff view for a single duplicate row — lets user pick field by field
+function FieldDiffPanel({ rowIndex, excelRow, existingCase, fieldChoices, onToggle, onToggleAll }) {
+  const allFields = Object.keys(FIELD_LABELS_FULL);
+  const changedFields = allFields.filter(f => {
+    const exVal = String(excelRow[f] || "").trim();
+    const dbVal = String(existingCase[f] || "").trim();
+    return exVal && exVal !== dbVal;
+  });
+  const unchangedFields = allFields.filter(f => {
+    const exVal = String(excelRow[f] || "").trim();
+    const dbVal = String(existingCase[f] || "").trim();
+    return exVal && exVal === dbVal;
+  });
+
+  if (changedFields.length === 0) {
+    return (
+      <div style={{ padding:"14px", background:"#F0FAF4", borderRadius:"8px",
+        border:"1px solid #B7DFC8", fontSize:"12.5px", color:"#2D6A4F" }}>
+        ✓ No differences found — Excel data matches what's already saved for this case.
+      </div>
+    );
+  }
+
+  const allExcel = changedFields.every(f => fieldChoices[f] === "excel");
+  const allDb    = changedFields.every(f => fieldChoices[f] === "db");
+
+  return (
+    <div>
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between",
+        marginBottom:"8px", flexWrap:"wrap", gap:"6px" }}>
+        <div style={{ fontSize:"12px", color: MUTED }}>
+          <strong style={{ color: INK }}>{changedFields.length}</strong> field{changedFields.length !== 1 ? "s" : ""} differ · click a row to toggle
+        </div>
+        <div style={{ display:"flex", gap:"6px" }}>
+          <button onClick={() => onToggleAll("db")}
+            style={{ fontSize:"11px", fontWeight:600, padding:"4px 10px", borderRadius:"6px",
+              border:`1px solid ${LINE}`, background: allDb ? "#E8F0FE" : "transparent",
+              color: allDb ? "#1A56DB" : "#4A5560", cursor:"pointer", fontFamily:"inherit" }}>
+            ← Keep all current
+          </button>
+          <button onClick={() => onToggleAll("excel")}
+            style={{ fontSize:"11px", fontWeight:600, padding:"4px 10px", borderRadius:"6px",
+              border:`1px solid ${LINE}`, background: allExcel ? "#FFF0E6" : "transparent",
+              color: allExcel ? ACCENT : "#4A5560", cursor:"pointer", fontFamily:"inherit" }}>
+            Accept all from Excel →
+          </button>
+        </div>
+      </div>
+
+      <div style={{ border:`1px solid ${LINE}`, borderRadius:"8px", overflow:"hidden", marginBottom:"10px" }}>
+        {/* Header */}
+        <div style={{ display:"grid", gridTemplateColumns:"160px 1fr 1fr", background: SECTION_BG,
+          borderBottom:`2px solid ${LINE}`, fontSize:"11px", fontWeight:700, color:"#4A5560" }}>
+          <div style={{ padding:"7px 10px" }}>Field</div>
+          <div style={{ padding:"7px 10px", borderLeft:`1px solid ${LINE}`, display:"flex", alignItems:"center", gap:"6px" }}>
+            <span style={{ background:"#E8F0FE", color:"#1A56DB", padding:"1px 7px", borderRadius:"4px", fontSize:"10px", fontWeight:700 }}>CURRENT</span>
+            saved in app
+          </div>
+          <div style={{ padding:"7px 10px", borderLeft:`1px solid ${LINE}`, display:"flex", alignItems:"center", gap:"6px" }}>
+            <span style={{ background:"#FFF0E6", color: ACCENT, padding:"1px 7px", borderRadius:"4px", fontSize:"10px", fontWeight:700 }}>EXCEL</span>
+            from spreadsheet
+          </div>
+        </div>
+
+        {changedFields.map((f, idx) => {
+          const choice = fieldChoices[f] || "db";
+          const exVal  = displayFieldValue(f, excelRow[f]);
+          const dbVal  = displayFieldValue(f, existingCase[f]);
+          return (
+            <div key={f}
+              style={{ display:"grid", gridTemplateColumns:"160px 1fr 1fr",
+                borderBottom: idx < changedFields.length - 1 ? `1px solid ${LINE}` : "none",
+                background: "#fff", cursor:"pointer" }}
+              onClick={() => onToggle(f)}>
+              <div style={{ padding:"8px 10px", fontSize:"12px", fontWeight:600, color:"#4A5560",
+                display:"flex", alignItems:"flex-start", gap:"4px", borderRight:`1px solid ${LINE}` }}>
+                {FIELD_LABELS_FULL[f] || f}
+              </div>
+              {/* Current (db) value */}
+              <div onClick={e => { e.stopPropagation(); if (choice !== "db") onToggle(f); }}
+                style={{ padding:"8px 10px", fontSize:"12px", lineHeight:"1.4", borderRight:`1px solid ${LINE}`,
+                  background: choice === "db" ? "#EEF4FF" : "#fff",
+                  borderLeft: choice === "db" ? "3px solid #4285F4" : "3px solid transparent",
+                  color: choice === "db" ? "#1A56DB" : INK, wordBreak:"break-word",
+                  transition:"background 0.12s" }}>
+                {choice === "db" && <span style={{ fontSize:"10px", fontWeight:700, marginRight:"5px" }}>✓</span>}
+                {dbVal}
+              </div>
+              {/* Excel value */}
+              <div onClick={e => { e.stopPropagation(); if (choice !== "excel") onToggle(f); }}
+                style={{ padding:"8px 10px", fontSize:"12px", lineHeight:"1.4",
+                  background: choice === "excel" ? ACCENT_SOFT : "#fff",
+                  borderLeft: choice === "excel" ? `3px solid ${ACCENT}` : "3px solid transparent",
+                  color: choice === "excel" ? ACCENT_DARK : INK, wordBreak:"break-word",
+                  transition:"background 0.12s" }}>
+                {choice === "excel" && <span style={{ fontSize:"10px", fontWeight:700, marginRight:"5px" }}>✓</span>}
+                {exVal}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {unchangedFields.length > 0 && (
+        <div style={{ fontSize:"11.5px", color: MUTED }}>
+          {unchangedFields.length} field{unchangedFields.length !== 1 ? "s" : ""} unchanged ({unchangedFields.map(f => FIELD_LABELS_FULL[f]).join(", ")})
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ExcelImportPage({ cases: existingCases, onImport, showToast }) {
-  const [loading, setLoading]   = useState(false);
-  const [rows, setRows]         = useState(null); // parsed preview rows
-  const [fileName, setFileName] = useState("");
-  const [error, setError]       = useState(null);
+  const [loading, setLoading]     = useState(false);
+  const [rows, setRows]           = useState(null);
+  const [fileName, setFileName]   = useState("");
+  const [error, setError]         = useState(null);
   const [xlibReady, setXlibReady] = useState(!!window._XLSX);
-  const [selected, setSelected] = useState(null); // set of row indices to import
+  const [selected, setSelected]   = useState(null); // Set of row indices
   const [importing, setImporting] = useState(false);
+  const [phase, setPhase]         = useState("preview"); // "preview" | "diff"
+  const [diffRowIdx, setDiffRowIdx] = useState(null);   // which duplicate we're reviewing
+  // fieldChoices[rowIdx][fieldKey] = "excel" | "db"
+  const [fieldChoices, setFieldChoices] = useState({});
   const inputRef = useRef(null);
 
-  // Load SheetJS lazily
   useEffect(() => {
     if (window._XLSX) { setXlibReady(true); return; }
     const script = document.createElement("script");
     script.src = "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js";
     script.onload = () => { window._XLSX = window.XLSX; setXlibReady(true); };
-    script.onerror = () => setError("Couldn't load Excel parser library. Check your connection.");
+    script.onerror = () => setError("Couldn't load Excel parser library.");
     document.head.appendChild(script);
   }, []);
 
   const handleFile = async (file) => {
     if (!file) return;
     const ext = file.name.split(".").pop().toLowerCase();
-    if (!["xlsx","xls","csv","ods"].includes(ext)) {
-      setError("Unsupported file type. Please use .xlsx, .xls, .csv, or .ods");
-      return;
-    }
+    if (!["xlsx","xls","csv","ods"].includes(ext)) { setError("Unsupported file type. Please use .xlsx, .xls, .csv, or .ods"); return; }
     setFileName(file.name); setLoading(true); setError(null); setRows(null); setSelected(null);
+    setFieldChoices({}); setPhase("preview");
     try {
       const ab = await file.arrayBuffer();
       const wb = window._XLSX.read(ab, { type: "array" });
       const parsed = parseExcelRows(wb);
       if (parsed.length === 0) {
-        setError("No recognizable columns found. Make sure your headers match the expected field names (Account, Subject, Priority, Status, etc.).");
+        setError("No recognizable columns found.");
       } else {
         setRows(parsed);
         setSelected(new Set(parsed.map((_, i) => i)));
+        // Pre-initialise fieldChoices for duplicates — default all to "excel"
+        const choices = {};
+        parsed.forEach((row, i) => {
+          const snowId = String(row.serviceNowId || "").trim().toLowerCase();
+          const existing = existingCases.find(c => (c.serviceNowId||"").trim().toLowerCase() === snowId);
+          if (existing) {
+            choices[i] = {};
+            Object.keys(FIELD_LABELS_FULL).forEach(f => { choices[i][f] = "excel"; });
+          }
+        });
+        setFieldChoices(choices);
       }
-    } catch(e) {
-      setError("Failed to parse file: " + e.message);
-    } finally {
-      setLoading(false);
-    }
+    } catch(e) { setError("Failed to parse file: " + e.message); }
+    finally { setLoading(false); }
   };
 
-  const toggleRow = (i) => {
-    setSelected(prev => {
-      const s = new Set(prev);
-      if (s.has(i)) s.delete(i); else s.add(i);
-      return s;
-    });
+  const toggleRow = (i) => setSelected(prev => { const s = new Set(prev); s.has(i) ? s.delete(i) : s.add(i); return s; });
+  const toggleAll = () => setSelected(prev => prev.size === rows.length ? new Set() : new Set(rows.map((_,i) => i)));
+
+  const existingBySnowId = Object.fromEntries(
+    existingCases.filter(c => c.serviceNowId?.trim())
+      .map(c => [c.serviceNowId.trim().toLowerCase(), c])
+  );
+
+  const isDupe = (row) => {
+    const snowId = String(row.serviceNowId || "").trim().toLowerCase();
+    return snowId && !!existingBySnowId[snowId];
   };
 
-  const toggleAll = () => {
-    if (!rows) return;
-    setSelected(prev => prev.size === rows.length ? new Set() : new Set(rows.map((_,i) => i)));
+  const dupeRows = rows ? rows.map((r, i) => ({ row: r, idx: i, existing: isDupe(r) ? existingBySnowId[String(r.serviceNowId||"").trim().toLowerCase()] : null })).filter(x => x.existing) : [];
+  const reviewedDupes = new Set(Object.keys(fieldChoices).map(Number));
+
+  const toggleField = (rowIdx, field) => {
+    setFieldChoices(prev => ({
+      ...prev,
+      [rowIdx]: { ...prev[rowIdx], [field]: prev[rowIdx]?.[field] === "excel" ? "db" : "excel" }
+    }));
+  };
+
+  const toggleAllFields = (rowIdx, source) => {
+    setFieldChoices(prev => ({
+      ...prev,
+      [rowIdx]: Object.fromEntries(Object.keys(FIELD_LABELS_FULL).map(f => [f, source]))
+    }));
   };
 
   const handleImport = async () => {
     if (!rows || !selected?.size) return;
     setImporting(true);
-    const toCreate = rows.filter((_, i) => selected.has(i));
-    await onImport(toCreate);
-    showToast(`${toCreate.length} case${toCreate.length===1?"":"s"} imported`);
-    setRows(null); setFileName(""); setSelected(null);
+    const toImport = rows.filter((_, i) => selected.has(i)).map((row, idx) => {
+      const globalIdx = rows.indexOf(row);
+      const existing = isDupe(row) ? existingBySnowId[String(row.serviceNowId||"").trim().toLowerCase()] : null;
+      if (!existing) return row;
+      // Merge: for each field, pick the chosen source
+      const choices = fieldChoices[globalIdx] || {};
+      const merged = { ...row };
+      Object.keys(FIELD_LABELS_FULL).forEach(f => {
+        if (choices[f] === "db") merged[f] = existing[f] || "";
+      });
+      return merged;
+    });
+    await onImport(toImport);
+    setRows(null); setFileName(""); setSelected(null); setFieldChoices({}); setPhase("preview");
     setImporting(false);
   };
 
-  const mappedFieldCount = (row) => Object.values(row).filter(v => String(v).trim()).length;
-
-  // Build a set of existing serviceNowIds for duplicate detection
-  const existingSnowIds = new Set(
-    existingCases.map(c => (c.serviceNowId||"").trim().toLowerCase()).filter(Boolean)
-  );
-
-  // Column preview — figure out which fields are actually present
   const presentFields = rows ? (() => {
     const keys = new Set();
     rows.forEach(r => Object.keys(r).forEach(k => { if (String(r[k]).trim()) keys.add(k); }));
     return Array.from(keys);
   })() : [];
 
-  const FIELD_LABELS = {
-    serviceNowId:"ServiceNow ID", account:"Account", contact:"Contact",
-    caseReason:"Case Reason", caseSubreason:"Subreason", priority:"Priority",
-    status:"Status", productVersion:"Product Ver.", productUpdate:"Product Upd.",
-    caseOwner:"Owner", subject:"Subject",
-    description:"Description", planToResolve:"Plan to Resolve",
-    expectedBehavior:"Expected Behavior", stepsToReproduce:"Steps to Reproduce",
-    troubleshootingSteps:"Troubleshooting", businessImpact:"Business Impact",
-    statusSummary:"Status Summary", nextMilestone:"Next Milestone",
-    caseSkill:"Skill", resolutionCode:"Res. Code", resolutionNotes:"Res. Notes",
-  };
+  // ── DIFF PHASE ──
+  if (phase === "diff" && diffRowIdx !== null) {
+    const { row, idx, existing } = dupeRows[diffRowIdx];
+    return (
+      <div style={{ flex:1, overflowY:"auto", padding:"22px" }} className="cl-scroll">
+        <div style={{ maxWidth:"860px" }}>
+          <button onClick={() => setPhase("preview")}
+            style={{ display:"flex", alignItems:"center", gap:"5px", background:"transparent",
+              border:"none", color: MUTED, fontSize:"13px", cursor:"pointer", marginBottom:"14px",
+              padding:0, fontFamily:"inherit" }}>
+            ← Back to preview
+          </button>
+
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:"14px", flexWrap:"wrap", gap:"8px" }}>
+            <div>
+              <h2 style={{ fontFamily:"'Space Grotesk',sans-serif", fontSize:"17px", fontWeight:700, margin:"0 0 2px" }}>
+                Review changes — {existing.account || existing.serviceNowId || `Case #${pad4(existing.number)}`}
+              </h2>
+              <div style={{ fontSize:"12px", color: MUTED }}>
+                Case №{pad4(existing.number)} · ServiceNow ID: {existing.serviceNowId || "—"}
+                {" · "}{diffRowIdx + 1} of {dupeRows.length} conflict{dupeRows.length !== 1 ? "s" : ""}
+              </div>
+            </div>
+            <div style={{ display:"flex", gap:"8px" }}>
+              {diffRowIdx > 0 && (
+                <button onClick={() => setDiffRowIdx(diffRowIdx - 1)}
+                  style={{ background:"transparent", border:`1px solid ${LINE}`, borderRadius:"7px",
+                    padding:"7px 12px", fontSize:"12px", fontWeight:600, cursor:"pointer", fontFamily:"inherit", color:"#4A5560" }}>
+                  ← Prev
+                </button>
+              )}
+              {diffRowIdx < dupeRows.length - 1 ? (
+                <button onClick={() => setDiffRowIdx(diffRowIdx + 1)}
+                  style={{ background: ACCENT, color:"#fff", border:"none", borderRadius:"7px",
+                    padding:"7px 14px", fontSize:"12px", fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}>
+                  Next →
+                </button>
+              ) : (
+                <button onClick={() => setPhase("preview")}
+                  style={{ background:"#1A7A4A", color:"#fff", border:"none", borderRadius:"7px",
+                    padding:"7px 14px", fontSize:"12px", fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}>
+                  ✓ Done reviewing
+                </button>
+              )}
+            </div>
+          </div>
+
+          <FieldDiffPanel
+            rowIndex={idx}
+            excelRow={row}
+            existingCase={existing}
+            fieldChoices={fieldChoices[idx] || {}}
+            onToggle={(field) => toggleField(idx, field)}
+            onToggleAll={(source) => toggleAllFields(idx, source)}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  // ── PREVIEW PHASE ──
+  const dupeCount = rows ? rows.filter(r => isDupe(r)).length : 0;
+  const newCount  = rows ? rows.length - dupeCount : 0;
 
   return (
     <div style={{ flex:1, overflowY:"auto", padding:"22px" }} className="cl-scroll">
@@ -673,21 +897,19 @@ function ExcelImportPage({ cases: existingCases, onImport, showToast }) {
         </h2>
         <p style={{ fontSize:"13px", color: MUTED, marginTop:0, marginBottom:"18px", lineHeight:"1.6" }}>
           Upload an <strong>.xlsx</strong>, <strong>.xls</strong>, or <strong>.csv</strong> file.
-          Each row becomes a case. Column headers are matched flexibly — see the template for supported names.
+          Each row becomes a case. For existing cases, you can review and pick which fields to keep.
         </p>
 
-        {/* Template download hint */}
         <div style={{ display:"flex", alignItems:"center", gap:"10px", padding:"10px 14px",
           background: CARD, border:`1px solid ${LINE}`, borderRadius:"8px", marginBottom:"18px",
           fontSize:"12.5px", color:"#4A5560" }}>
           <Table2 size={16} color={ACCENT}/>
-          <span>Supported columns: <strong>ID</strong>, <strong>Account</strong>, <strong>Subject</strong>, <strong>Priority</strong>, <strong>Status</strong>, <strong>Contact</strong>, <strong>Case Reason</strong>, <strong>Case Subreason</strong>, <strong>Business/User Impact</strong>, <strong>Product Version</strong>, <strong>Description</strong>, and more.</span>
+          <span>Supported columns: <strong>ID</strong>, <strong>Account</strong>, <strong>Subject</strong>, <strong>Priority</strong>, <strong>Status</strong>, <strong>Contact</strong>, <strong>Case Reason</strong>, <strong>Business/User Impact</strong>, <strong>Description</strong>, and more.</span>
         </div>
 
         {/* Upload zone */}
         {!rows && (
-          <div
-            className="cl-dropzone"
+          <div className="cl-dropzone"
             onClick={() => !loading && xlibReady && inputRef.current?.click()}
             onDragOver={e => { e.preventDefault(); e.currentTarget.classList.add("dragover"); }}
             onDragLeave={e => e.currentTarget.classList.remove("dragover")}
@@ -723,34 +945,39 @@ function ExcelImportPage({ cases: existingCases, onImport, showToast }) {
           </div>
         )}
 
-        {/* Preview table */}
         {rows && (
           <div>
+            {/* Summary + actions bar */}
             <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between",
               marginBottom:"10px", flexWrap:"wrap", gap:"8px" }}>
               <div style={{ fontSize:"13px", fontWeight:600, color: INK }}>
-                <span style={{ color: ACCENT }}>{rows.length}</span> rows found in <em>{fileName}</em>
-                {(() => {
-                  const dupes = rows.filter(r => r.serviceNowId && existingSnowIds.has(String(r.serviceNowId).trim().toLowerCase())).length;
-                  const news = rows.length - dupes;
-                  return <span style={{ color: MUTED, fontWeight:400 }}>
-                    {" · "}{news > 0 && <>{news} new</>}{news > 0 && dupes > 0 && ", "}{dupes > 0 && <>{dupes} will overwrite existing</>}
-                    {selected?.size !== rows.length && ` · ${selected?.size} selected`}
-                  </span>;
-                })()}
+                <span style={{ color: ACCENT }}>{rows.length}</span> rows in <em>{fileName}</em>
+                <span style={{ color: MUTED, fontWeight:400 }}>
+                  {newCount > 0 && ` · ${newCount} new`}
+                  {dupeCount > 0 && ` · ${dupeCount} existing`}
+                  {selected?.size !== rows.length && ` · ${selected?.size} selected`}
+                </span>
               </div>
-              <div style={{ display:"flex", gap:"8px", alignItems:"center" }}>
-                <button className="cl-btn-ghost" onClick={() => { setRows(null); setFileName(""); setSelected(null); setError(null); }}
+              <div style={{ display:"flex", gap:"8px", alignItems:"center", flexWrap:"wrap" }}>
+                <button onClick={() => { setRows(null); setFileName(""); setSelected(null); setError(null); setFieldChoices({}); }}
                   style={{ background:"transparent", border:`1px solid ${LINE}`, borderRadius:"7px",
                     padding:"6px 12px", fontSize:"12px", fontWeight:600, cursor:"pointer", fontFamily:"inherit", color:"#4A5560" }}>
                   ← Change file
                 </button>
-                <button className="cl-btn-primary" onClick={handleImport}
-                  disabled={!selected?.size || importing}
+                {dupeCount > 0 && (
+                  <button onClick={() => { setDiffRowIdx(0); setPhase("diff"); }}
+                    style={{ display:"flex", alignItems:"center", gap:"5px",
+                      background:"transparent", border:`1px solid #B45309`, borderRadius:"7px",
+                      padding:"6px 12px", fontSize:"12px", fontWeight:600, cursor:"pointer",
+                      fontFamily:"inherit", color:"#B45309" }}>
+                    ✎ Review {dupeCount} conflict{dupeCount !== 1 ? "s" : ""}
+                  </button>
+                )}
+                <button onClick={handleImport} disabled={!selected?.size || importing}
                   style={{ display:"flex", alignItems:"center", gap:"6px",
                     background: selected?.size && !importing ? ACCENT : "#D8D6D2",
-                    color:"#fff", border:"none", borderRadius:"7px",
-                    padding:"7px 14px", fontSize:"12.5px", fontWeight:600,
+                    color:"#fff", border:"none", borderRadius:"7px", padding:"7px 14px",
+                    fontSize:"12.5px", fontWeight:600,
                     cursor: selected?.size && !importing ? "pointer" : "default", fontFamily:"inherit" }}>
                   {importing
                     ? <><div style={{ width:13,height:13,border:"2px solid rgba(255,255,255,0.3)",borderTopColor:"#fff",borderRadius:"50%",animation:"cl-spin 0.7s linear infinite" }}/> Importing…</>
@@ -759,21 +986,35 @@ function ExcelImportPage({ cases: existingCases, onImport, showToast }) {
               </div>
             </div>
 
+            {/* Conflicts notice */}
+            {dupeCount > 0 && (
+              <div style={{ display:"flex", alignItems:"center", gap:"10px", padding:"10px 14px",
+                background:"#FFF8E6", border:`1px solid #F2A93B`, borderRadius:"8px",
+                marginBottom:"12px", fontSize:"12.5px", color:"#7A5C00" }}>
+                <span style={{ fontSize:"16px" }}>⚠</span>
+                <span>
+                  <strong>{dupeCount} row{dupeCount !== 1 ? "s" : ""}</strong> match existing cases.
+                  Click <strong>✎ Review conflicts</strong> to compare field-by-field and choose which values to keep.
+                  If you skip review, Excel values will be used for changed fields.
+                </span>
+              </div>
+            )}
+
+            {/* Preview table */}
             <div style={{ overflowX:"auto", border:`1px solid ${LINE}`, borderRadius:"10px",
               background: CARD, marginBottom:"12px" }}>
               <table style={{ width:"100%", borderCollapse:"collapse", fontSize:"12px" }}>
                 <thead>
                   <tr style={{ background: SECTION_BG, borderBottom:`2px solid ${LINE}` }}>
-                    <th style={{ padding:"8px 10px", textAlign:"center", width:"40px", borderRight:`1px solid ${LINE}` }}>
-                      <input type="checkbox" checked={selected?.size === rows.length}
-                        onChange={toggleAll} style={{ cursor:"pointer" }}/>
+                    <th style={{ padding:"8px 10px", textAlign:"center", width:"36px", borderRight:`1px solid ${LINE}` }}>
+                      <input type="checkbox" checked={selected?.size === rows.length} onChange={toggleAll} style={{ cursor:"pointer" }}/>
                     </th>
                     <th style={{ padding:"8px 10px", textAlign:"left", fontFamily:"'IBM Plex Mono',monospace", color: MUTED, borderRight:`1px solid ${LINE}`, whiteSpace:"nowrap" }}>#</th>
                     <th style={{ padding:"8px 10px", textAlign:"left", fontWeight:700, color:"#4A5560", whiteSpace:"nowrap", borderRight:`1px solid ${LINE}` }}>Action</th>
                     {presentFields.map(f => (
                       <th key={f} style={{ padding:"8px 10px", textAlign:"left", fontWeight:700,
                         color:"#4A5560", whiteSpace:"nowrap", borderRight:`1px solid ${LINE}` }}>
-                        {FIELD_LABELS[f] || f}
+                        {FIELD_LABELS_SHORT[f] || f}
                       </th>
                     ))}
                   </tr>
@@ -782,14 +1023,14 @@ function ExcelImportPage({ cases: existingCases, onImport, showToast }) {
                   {rows.map((row, i) => {
                     const pr = priorityMeta(row.priority);
                     const isSelected = selected?.has(i);
-                    const isDupe = row.serviceNowId && existingSnowIds.has(String(row.serviceNowId).trim().toLowerCase());
+                    const dupe = isDupe(row);
+                    const existingCase = dupe ? existingBySnowId[String(row.serviceNowId||"").trim().toLowerCase()] : null;
+                    const dupeIdx = dupeRows.findIndex(d => d.idx === i);
                     return (
-                      <tr key={i}
-                        onClick={() => toggleRow(i)}
+                      <tr key={i} onClick={() => toggleRow(i)}
                         style={{ borderBottom:`1px solid ${LINE}`,
-                          background: isSelected ? (isDupe ? "#FFF8F0" : ACCENT_SOFT) : "#fff",
-                          cursor:"pointer", transition:"background 0.1s",
-                          opacity: isSelected ? 1 : 0.45 }}>
+                          background: isSelected ? (dupe ? "#FFF8F0" : ACCENT_SOFT) : "#fff",
+                          cursor:"pointer", opacity: isSelected ? 1 : 0.45 }}>
                         <td style={{ padding:"7px 10px", textAlign:"center", borderRight:`1px solid ${LINE}` }}
                           onClick={e => { e.stopPropagation(); toggleRow(i); }}>
                           <input type="checkbox" checked={isSelected} onChange={() => toggleRow(i)} style={{ cursor:"pointer" }}/>
@@ -799,22 +1040,44 @@ function ExcelImportPage({ cases: existingCases, onImport, showToast }) {
                           {i + 1}
                         </td>
                         <td style={{ padding:"7px 10px", borderRight:`1px solid ${LINE}`, whiteSpace:"nowrap" }}>
-                          <span style={{ fontSize:"10px", fontWeight:700, padding:"2px 7px", borderRadius:"4px",
-                            background: isDupe ? "#FFF0DD" : "#E6F5EC",
-                            color: isDupe ? "#B45309" : "#2D6A4F" }}>
-                            {isDupe ? "↻ Update" : "+ New"}
-                          </span>
+                          <div style={{ display:"flex", alignItems:"center", gap:"5px" }}>
+                            <span style={{ fontSize:"10px", fontWeight:700, padding:"2px 7px", borderRadius:"4px",
+                              background: dupe ? "#FFF0DD" : "#E6F5EC", color: dupe ? "#B45309" : "#2D6A4F" }}>
+                              {dupe ? "↻ Update" : "+ New"}
+                            </span>
+                            {dupe && (
+                              <button onClick={e => { e.stopPropagation(); setDiffRowIdx(dupeIdx); setPhase("diff"); }}
+                                style={{ fontSize:"10px", fontWeight:600, padding:"2px 7px", borderRadius:"4px",
+                                  border:`1px solid #B45309`, background:"transparent", color:"#B45309",
+                                  cursor:"pointer", fontFamily:"inherit" }}>
+                                Review
+                              </button>
+                            )}
+                          </div>
                         </td>
-                        {presentFields.map(f => (
-                          <td key={f} style={{ padding:"7px 10px", borderRight:`1px solid ${LINE}`,
-                            maxWidth:"180px", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>
-                            {f === "priority"
-                              ? <span style={{ fontWeight:700, color: pr.color, fontFamily:"'IBM Plex Mono',monospace", fontSize:"11px" }}>{pr.short}</span>
-                              : f === "status"
-                                ? <span style={{ fontSize:"11px", color: MUTED }}>{statusMeta(row.status).label}</span>
-                                : String(row[f] || "—")}
-                          </td>
-                        ))}
+                        {presentFields.map(f => {
+                          const exVal = row[f];
+                          const dbVal = existingCase?.[f];
+                          const changed = dupe && String(exVal||"").trim() && String(exVal||"").trim() !== String(dbVal||"").trim();
+                          const choice = fieldChoices[i]?.[f];
+                          return (
+                            <td key={f} style={{ padding:"7px 10px", borderRight:`1px solid ${LINE}`,
+                              maxWidth:"160px", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis",
+                              background: changed && choice === "db" ? "#EEF4FF" : "transparent" }}>
+                              {f === "priority"
+                                ? <span style={{ fontWeight:700, color: pr.color, fontFamily:"'IBM Plex Mono',monospace", fontSize:"11px" }}>{pr.short}</span>
+                                : f === "status"
+                                  ? <span style={{ fontSize:"11px", color: MUTED }}>{statusMeta(row.status).label}</span>
+                                  : <>
+                                      {changed && <span title={choice==="db" ? "Keeping current value" : "Using Excel value"}
+                                        style={{ fontSize:"10px", marginRight:"3px", color: choice==="db" ? "#4285F4" : ACCENT }}>
+                                        {choice==="db" ? "●" : "○"}
+                                      </span>}
+                                      {String(exVal || "—")}
+                                    </>}
+                            </td>
+                          );
+                        })}
                       </tr>
                     );
                   })}
@@ -822,7 +1085,7 @@ function ExcelImportPage({ cases: existingCases, onImport, showToast }) {
               </table>
             </div>
             <div style={{ fontSize:"11.5px", color: MUTED }}>
-              Click rows to toggle · <span style={{ color:"#B45309" }}>↻ Update</span> rows overwrite existing cases with the same ID · <span style={{ color:"#2D6A4F" }}>+ New</span> rows create new cases
+              Click rows to toggle selection · <strong style={{ color:"#B45309" }}>↻ Update</strong> rows match existing cases — click <strong>Review</strong> to compare field by field · <strong style={{ color:"#2D6A4F" }}>+ New</strong> rows create new cases
             </div>
           </div>
         )}
